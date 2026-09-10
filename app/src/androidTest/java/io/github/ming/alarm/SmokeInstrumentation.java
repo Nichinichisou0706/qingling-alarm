@@ -3,7 +3,6 @@ package io.github.ming.alarm;
 import android.app.*;
 import android.content.*;
 import android.os.Bundle;
-import android.os.SystemClock;
 import java.util.concurrent.atomic.AtomicReference;
 
 /** Run only on a disposable test device. Exercises real AlarmManager -> receiver -> service. */
@@ -39,6 +38,11 @@ public class SmokeInstrumentation extends Instrumentation {
                     Alarm b=new Alarm();b.id=900010+mode;b.mode=mode;Store.save(c,b);
                     check(Store.get(c,b.id).mode==mode,"Mode preserved: "+mode);Store.delete(c,b.id);
                 }
+                Alarm titled=new Alarm();titled.playlist="song/1303464858";titled.tracks.add("/cache/1.mp3");titled.trackTitles.add("于是");
+                try{
+                    Alarm titledBack=Alarm.from(new org.json.JSONObject(titled.json().toString()));
+                    check(titledBack.trackTitles.size()==1&&"于是".equals(titledBack.trackTitles.get(0)),"Track titles persist through alarm JSON");
+                }catch(Exception e){throw new RuntimeException(e);}
                 Alarm timed=new Alarm();timed.id=900002;timed.mode=1;timed.nextAt=System.currentTimeMillis()+3000;
                 Store.save(c,timed);Scheduler.restore(c,false);
                 check(c.getSystemService(AlarmManager.class).getNextAlarmClock()!=null,"System alarm clock registered");
@@ -91,15 +95,17 @@ public class SmokeInstrumentation extends Instrumentation {
                 for(int i=0;i<8;i++)Store.delete(c,900100+i);
             });
             MainActivity activity=(MainActivity)startActivitySync(new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
-            main(()->{activity.selectTab(2);check(activity.currentTab()==2,"System permissions are a separate module");activity.selectTab(1);check(activity.currentTab()==1,"Alarm list is a separate module");activity.selectTab(0);check(activity.currentTab()==0,"Alarm editor is a separate module");activity.onBackPressed();});
-            android.view.accessibility.AccessibilityNodeInfo root=null;
-            long dialogDeadline=SystemClock.elapsedRealtime()+6000;
-            do{
-                Thread.sleep(250);root=getUiAutomation().getRootInActiveWindow();
-                if(root!=null&&!root.findAccessibilityNodeInfosByText("保存并返回").isEmpty())break;
-            }while(SystemClock.elapsedRealtime()<dialogDeadline);
-            check(root!=null&&!root.findAccessibilityNodeInfosByText("保存并返回").isEmpty(),"Editor back offers save before leaving");
-            if(root!=null){java.util.List<android.view.accessibility.AccessibilityNodeInfo> cancel=root.findAccessibilityNodeInfosByText("不保存");if(!cancel.isEmpty())cancel.get(0).performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK);}
+            main(()->{
+                activity.selectTab(2);check(activity.currentTab()==2,"System permissions are a separate module");
+                activity.selectTab(1);check(activity.currentTab()==1,"Alarm list is a separate module");
+                activity.selectTab(0);check(activity.currentTab()==0,"Alarm editor is a separate module");
+                activity.onBackPressed();
+                check(activity.currentTab()==1,"Back from editor returns to alarm list without save dialog");
+                activity.selectTab(0);check(activity.currentTab()==0,"Draft survives switching back to editor");
+            });
+            Thread.sleep(300);
+            android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();
+            check(root==null||root.findAccessibilityNodeInfosByText("保存并返回").isEmpty(),"No save prompt when leaving editor");
             main(activity::finish);
             result.putString("stream","PASS: "+checks+" device checks\n");finish(Activity.RESULT_OK,result);
         } catch(Throwable t) {

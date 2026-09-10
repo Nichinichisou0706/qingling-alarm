@@ -4,10 +4,17 @@ import android.graphics.*;
 import android.view.View;
 /** Artwork from the user-supplied Whom001x/- repository; see docs/ARTWORK.md. */
 public class MascotView extends View {
-    private static Bitmap art;
+    private static final Bitmap[] cache=new Bitmap[DayPeriod.values().length];
+    private Bitmap art;
     private final Paint paint=new Paint(Paint.ANTI_ALIAS_FLAG|Paint.FILTER_BITMAP_FLAG);
     private final RectF destination=new RectF();
-    public MascotView(Context c){super(c);setContentDescription("青铃少女");if(art==null)art=BitmapFactory.decodeResource(c.getResources(),R.drawable.mascot);}
+    public MascotView(Context c){super(c);setPeriod(DayPeriod.now());}
+    public void setPeriod(DayPeriod period){
+        int[] resources={R.drawable.mascot_morning,R.drawable.mascot_noon,R.drawable.mascot_afternoon,R.drawable.mascot_evening,R.drawable.mascot_night};
+        int index=period.ordinal();
+        if(cache[index]==null)cache[index]=BitmapFactory.decodeResource(getResources(),resources[index]);
+        art=cache[index];setContentDescription("青铃少女 · "+period.state);invalidate();
+    }
     @Override protected void onDraw(Canvas canvas){
         super.onDraw(canvas);if(art==null)return;
         float scale=Math.min((float)getWidth()/art.getWidth(),(float)getHeight()/art.getHeight());

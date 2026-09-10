@@ -8,16 +8,26 @@ import java.util.List;
 public final class Alarm {
     public int id, hour = 7, minute = 30, days = 0, mode = 2, volume = 70;
     public boolean enabled = true;
-    public String label = "早安，新的一天", source = "内置 · 晨间微光", playlist = "";
+    public String label = "给自己的提醒", source = "内置 · 晨间微光", playlist = "";
     public long nextAt, snoozeAt;
     public final List<String> tracks = new ArrayList<>();
+    public final List<String> trackTitles = new ArrayList<>();
+    public String sourceDescription() {
+        StringBuilder text=new StringBuilder(source);
+        if(!playlist.isEmpty())for(int i=0;i<tracks.size();i++){
+            String title=i<trackTitles.size()?trackTitles.get(i):"";
+            text.append("\n").append(i+1).append(". ").append(title.isEmpty()?"已缓存曲目（重新选歌可补全名称）":title);
+        }
+        return text.toString();
+    }
     public JSONObject json() {
         JSONObject j = new JSONObject();
         try {
             j.put("id", id).put("hour", hour).put("minute", minute).put("days", days)
                 .put("mode", mode).put("volume", volume).put("enabled", enabled).put("label", label)
                 .put("source", source).put("playlist", playlist).put("nextAt", nextAt)
-                .put("snoozeAt", snoozeAt).put("tracks", new JSONArray(tracks));
+                .put("snoozeAt", snoozeAt).put("tracks", new JSONArray(tracks))
+                .put("trackTitles", new JSONArray(trackTitles));
         } catch (Exception e) { throw new IllegalStateException(e); }
         return j;
     }
@@ -25,11 +35,13 @@ public final class Alarm {
         Alarm a = new Alarm();
         a.id = j.optInt("id"); a.hour = j.optInt("hour",7); a.minute = j.optInt("minute",30);
         a.days = j.optInt("days"); a.mode = j.optInt("mode",2); a.volume = j.optInt("volume",70);
-        a.enabled = j.optBoolean("enabled",true); a.label = j.optString("label", "早安，新的一天");
+        a.enabled = j.optBoolean("enabled",true); a.label = j.optString("label", "给自己的提醒");
         a.source = j.optString("source","内置 · 晨间微光"); a.playlist = j.optString("playlist");
         a.nextAt = j.optLong("nextAt"); a.snoozeAt = j.optLong("snoozeAt");
         JSONArray ts = j.optJSONArray("tracks");
         if (ts != null) for (int i=0;i<ts.length();i++) a.tracks.add(ts.optString(i));
+        JSONArray titles=j.optJSONArray("trackTitles");
+        if(titles!=null)for(int i=0;i<a.tracks.size();i++)a.trackTitles.add(titles.optString(i));
         return a;
     }
     public String time() { return String.format(java.util.Locale.CHINA, "%02d:%02d", hour, minute); }

@@ -34,7 +34,7 @@ public class RingActivity extends Activity {
         page.addView(new MascotView(this),new LinearLayout.LayoutParams(Ui.dp(this,210),Ui.dp(this,220)));
         page.addView(Ui.title(this,new SimpleDateFormat("HH:mm",Locale.CHINA).format(new Date()),64));
         page.addView(Ui.title(this,id<0?"试听喜欢的旋律":alarm==null?"该醒来啦":alarm.label,24));
-        page.addView(Ui.text(this,"慢慢睁开眼，今天也值得期待。",14,Ui.MUTED));
+        page.addView(Ui.text(this,DayPeriod.now().ringMessage,14,Ui.MUTED));
         page.addView(Ui.button(this,"我醒了 · 停止",true,()->{AlarmService.dismiss(this,id,false);finish();}));
         if(id>0)page.addView(Ui.button(this,"再休息 5 分钟",false,()->{AlarmService.dismiss(this,id,true);finish();}));
         page.addView(Ui.text(this,"跟随媒体输出 · 10 分钟后自动停止",12,Ui.MUTED));

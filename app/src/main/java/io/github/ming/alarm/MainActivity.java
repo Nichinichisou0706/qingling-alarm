@@ -24,9 +24,14 @@ public class MainActivity extends Activity {
     private TextView outputView;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private TextView sourceView;
+    private DayPeriod shownPeriod=DayPeriod.now();
+    private TextView greetingView, subtitleView;
+    private MascotView mascotView;
     private final Handler timer=new Handler(Looper.getMainLooper());
     private final Runnable refresh=new Runnable(){public void run(){
         if(outputView!=null)outputView.setText(getString(R.string.audio_diagnostic,AudioOutput.available(MainActivity.this),Store.prefs(MainActivity.this).getString("audioRoute","试听时显示实际输出"),Store.prefs(MainActivity.this).getString("audioDecode","")));
+        DayPeriod period=DayPeriod.now();
+        if(shownPeriod!=period){shownPeriod=period;if(greetingView!=null)greetingView.setText(period.greeting);if(subtitleView!=null)subtitleView.setText(period.subtitle);if(mascotView!=null)mascotView.setPeriod(period);}
         timer.postDelayed(this,1500);
     }};
     @Override public void onCreate(Bundle state){
@@ -56,11 +61,10 @@ public class MainActivity extends Activity {
     public int currentTab(){return tab;}
     public void selectTab(int next){
         if(next==tab)return;
-        if(tab==0&&editing!=null){leaveEditor(()->{tab=next;render();});return;}
         tab=next;render();
     }
     private void render(){
-        outputView=null;
+        outputView=null;greetingView=null;subtitleView=null;mascotView=null;
         if(tab==0){if(editing==null){editing=new Alarm();editing.id=Store.newId(this);}editor();}
         else if(tab==2)settings();else home();
     }
@@ -77,9 +81,10 @@ public class MainActivity extends Activity {
         page.addView(Ui.text(this,"青 铃   /   我的闹钟",13,Ui.GREEN));
         LinearLayout heading=Ui.row(this);page.addView(heading);
         LinearLayout words=Ui.column(this);heading.addView(words,new LinearLayout.LayoutParams(0,-2,1));
-        words.addView(Ui.title(this,"早安，\n今天也陪着你。",27));
-        words.addView(Ui.text(this,"把喜欢的声音留给清晨",13,Ui.MUTED));
-        heading.addView(new MascotView(this),new LinearLayout.LayoutParams(Ui.dp(this,132),Ui.dp(this,205)));
+        DayPeriod period=DayPeriod.now();shownPeriod=period;
+        words.addView(greetingView=Ui.title(this,period.greeting,27));
+        words.addView(subtitleView=Ui.text(this,period.subtitle,13,Ui.MUTED));
+        heading.addView(mascotView=new MascotView(this),new LinearLayout.LayoutParams(Ui.dp(this,132),Ui.dp(this,205)));
         List<Alarm> alarms=Store.all(this);long next=Long.MAX_VALUE;Alarm soon=null;
         for(Alarm a:alarms){long at=a.enabled?a.nextAt:0;if(a.snoozeAt>0&&(at==0||a.snoozeAt<at))at=a.snoozeAt;if(at>0&&at<next){next=at;soon=a;}}
         LinearLayout hero=Ui.card(this,page,Ui.PALE);
@@ -100,7 +105,7 @@ public class MainActivity extends Activity {
             info.addView(Ui.title(this,a.time(),36));info.addView(Ui.text(this,a.label+" · "+a.repeatName(),13,Ui.MUTED));
             Switch toggle=new Switch(this);toggle.setContentDescription(a.time()+" 闹钟开关");toggle.setChecked(a.enabled);row.addView(toggle);
             toggle.setOnCheckedChangeListener((b,on)->{a.enabled=on;Scheduler.save(this,a);home();if(on&&!Scheduler.permitted(this))guide();});
-            card.addView(Ui.text(this,a.modeName()+"  /  "+a.source,13,Ui.GREEN));
+            card.addView(Ui.text(this,a.modeName()+"  /  "+a.sourceDescription(),13,Ui.GREEN));
             if(a.snoozeAt>0)card.addView(Ui.text(this,"稍后提醒："+new SimpleDateFormat("HH:mm",Locale.CHINA).format(new Date(a.snoozeAt)),13,Ui.GREEN));
             info.setOnClickListener(v->{editing=Store.get(this,a.id);tab=0;editor();});
             card.setOnClickListener(v->{editing=Store.get(this,a.id);tab=0;editor();});
@@ -108,17 +113,16 @@ public class MainActivity extends Activity {
         Button widget=Ui.button(this,AlarmWidget.hasWidget(this)?"✓ 闹钟表已添加到桌面":"将我的闹钟表添加到桌面",false,this::pinWidget);
         widget.setEnabled(!AlarmWidget.hasWidget(this));page.addView(widget);
         String status=Store.prefs(this).getString("status","");if(!status.isEmpty())page.addView(Ui.text(this,status,12,Ui.MUTED));
-        page.addView(Ui.text(this,"青铃 1.1.0  ·  为你的每一个明天",12,Ui.MUTED));
+        page.addView(Ui.text(this,"青铃 1.2.0  ·  为你的每一个明天",12,Ui.MUTED));
     }
     private void editor(){
         tab=0;final Alarm a=editing;LinearLayout page=Ui.page(this);
-        page.addView(Ui.button(this,"‹  返回",false,this::leaveEditor));
-        page.addView(Ui.text(this,"MAKE ROOM FOR MORNING",12,Ui.GREEN));
+        page.addView(Ui.text(this,"青铃 · 设定闹钟",12,Ui.GREEN));
         page.addView(Ui.title(this,Store.get(this,a.id)==null?"新的唤醒约定":"编辑唤醒约定",28));
         LinearLayout timeCard=Ui.card(this,page,Ui.PALE);
         TimePicker time=(TimePicker)getLayoutInflater().inflate(R.layout.time_picker,timeCard,false);time.setIs24HourView(true);time.setHour(a.hour);time.setMinute(a.minute);
         time.setOnTimeChangedListener((v,h,m)->{a.hour=h;a.minute=m;});timeCard.addView(time);
-        page.addView(Ui.title(this,"给早晨起个名字",17));
+        page.addView(Ui.title(this,"给这个提醒起个名字",17));
         EditText label=new EditText(this);label.setSingleLine(true);label.setText(a.label);label.setHint("例如：上班、午休、出发");label.setTextColor(Ui.INK);
         label.setFilters(new android.text.InputFilter[]{new android.text.InputFilter.LengthFilter(40)});page.addView(label);
         label.addTextChangedListener(new android.text.TextWatcher(){public void beforeTextChanged(CharSequence s,int start,int count,int after){}public void onTextChanged(CharSequence s,int start,int before,int count){a.label=s.toString();}public void afterTextChanged(android.text.Editable e){}});
@@ -131,14 +135,14 @@ public class MainActivity extends Activity {
         for(int n=0;n<3;n++){RadioButton r=new RadioButton(this);r.setText(names[n]);r.setTextColor(Ui.INK);r.setId(100+n);r.setMinHeight(Ui.dp(this,48));modes.addView(r);}modes.check(100+a.mode);
         modes.setOnCheckedChangeListener((g,id)->a.mode=id-100);page.addView(modes);
         LinearLayout source=Ui.card(this,page,android.graphics.Color.WHITE);source.addView(Ui.title(this,"音乐来源",18));
-        sourceView=Ui.text(this,a.source,14,Ui.GREEN);source.addView(sourceView);
+        sourceView=Ui.text(this,a.sourceDescription(),14,Ui.GREEN);source.addView(sourceView);
         source.addView(Ui.button(this,"导入本地音乐",false,()->{
             Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             try{startActivityForResult(intent,42);}catch(ActivityNotFoundException e){message("无法打开文件选择器","请安装或启用系统文件管理器。");}
         }));
         source.addView(Ui.button(this,"去网易云 · 从歌单选歌",false,this::openNetEase));
         source.addView(Ui.button(this,"接收分享链接 / 检查可导入歌曲",false,this::playlistDialog));
-        source.addView(Ui.button(this,"使用内置 · 晨间微光",false,()->{a.tracks.clear();a.source="内置 · 晨间微光";a.playlist="";sourceView.setText(a.source);}));
+        source.addView(Ui.button(this,"使用内置 · 晨间微光",false,()->{a.tracks.clear();a.trackTitles.clear();a.source="内置 · 晨间微光";a.playlist="";sourceView.setText(a.sourceDescription());}));
         source.addView(Ui.text(this,"在网易云的歌单里选中歌曲，点“分享 → 更多 → 青铃”；也可复制歌曲或歌单链接后返回粘贴。青铃会标出不可导入曲目。\n本地支持 MP3 / M4A / FLAC / WAV，不支持 NCM。导入后离线循环播放。",12,Ui.MUTED));
         page.addView(Ui.title(this,"播放强度",18));
         TextView volume=Ui.text(this,a.volume+"% × 系统媒体音量",14,Ui.MUTED);page.addView(volume);
@@ -158,22 +162,17 @@ public class MainActivity extends Activity {
     }
     private void saveEditor(){
         Alarm a=editing;if(a==null)return;
-        if(a.label.trim().isEmpty())a.label="早安，新的一天";
+        if(a.label.trim().isEmpty())a.label="给自己的提醒";
         AlarmService.dismiss(this,-1,false);a.enabled=true;Scheduler.save(this,a);editing=null;persistDraft();
         toast(Scheduler.permitted(this)?"已保存 "+a.time():"已保存，请到系统设置开启精确闹钟权限");
     }
-    private void leaveEditor(){leaveEditor(()->{tab=1;home();});}
-    private void leaveEditor(Runnable next){new AlertDialog.Builder(this).setTitle("保存这个闹钟吗？")
-        .setPositiveButton("保存并返回",(d,w)->{saveEditor();next.run();})
-        .setNegativeButton("不保存",(d,w)->{AlarmService.dismiss(this,-1,false);editing=null;persistDraft();next.run();})
-        .setNeutralButton("继续编辑",null).show();}
-    @Override public void onBackPressed(){if(tab==0&&editing!=null)leaveEditor();else if(tab!=1){tab=1;home();}else super.onBackPressed();}
+    @Override public void onBackPressed(){if(tab!=1){tab=1;home();}else super.onBackPressed();}
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);if(request!=42||result!=RESULT_OK||data==null||data.getData()==null||editing==null)return;
         Uri uri=data.getData();String name="本地音乐";
         try(Cursor c=getContentResolver().query(uri,new String[]{OpenableColumns.DISPLAY_NAME},null,null,null)){if(c!=null&&c.moveToFirst())name=c.getString(0);}catch(Exception ignored){}
         String title=name;Alarm a=editing;ProgressDialog progress=progress("正在导入并验证音乐…");
-        worker.execute(()->{try{String path=MusicImport.local(this,uri);ui(()->{progress.dismiss();a.tracks.clear();a.tracks.add(path);a.source="本地 · "+title;a.playlist="";if(editing==a)sourceView.setText(a.source);toast("导入成功，保存闹钟后生效");});}catch(Exception e){ui(()->{progress.dismiss();message("导入失败",e.getMessage());});}});
+        worker.execute(()->{try{String path=MusicImport.local(this,uri);ui(()->{progress.dismiss();a.tracks.clear();a.trackTitles.clear();a.tracks.add(path);a.source="本地 · "+title;a.playlist="";persistDraft();if(editing==a)sourceView.setText(a.sourceDescription());toast("导入成功，保存闹钟后生效");});}catch(Exception e){ui(()->{progress.dismiss();message("导入失败",e.getMessage());});}});
     }
     private ProgressDialog progress(String title){ProgressDialog p=new ProgressDialog(this);p.setMessage(title);p.setCancelable(false);p.show();return p;}
     private void openNetEase(){
@@ -203,10 +202,10 @@ public class MainActivity extends Activity {
     private void download(Alarm a,String id,String title,List<MusicImport.Song> songs){
         ProgressDialog p=progress("准备缓存歌曲…");
         worker.execute(()->{
-            List<String> files=new ArrayList<>(),failed=new ArrayList<>();int count=0;
+            List<String> files=new ArrayList<>(),failed=new ArrayList<>(),titles=new ArrayList<>();int count=0;
             for(MusicImport.Song s:songs){if(Thread.currentThread().isInterrupted())break;String msg="正在缓存 "+(++count)+" / "+songs.size()+"\n"+s.title;ui(()->p.setMessage(msg));
-                try{files.add(MusicImport.cache(this,s));}catch(Exception e){failed.add(s.title+"："+e.getMessage());}}
-            ui(()->{p.dismiss();if(!files.isEmpty()){a.tracks.clear();a.tracks.addAll(files);a.source="网易云 · "+title+"（"+files.size()+" 首已缓存）";a.playlist=id;if(editing==a)sourceView.setText(a.source);}
+                try{files.add(MusicImport.cache(this,s));titles.add(s.title);}catch(Exception e){failed.add(s.title+"："+e.getMessage());}}
+            ui(()->{p.dismiss();if(!files.isEmpty()){a.tracks.clear();a.tracks.addAll(files);a.trackTitles.clear();a.trackTitles.addAll(titles);a.source="网易云 · "+title+"（"+files.size()+" 首已缓存）";a.playlist=id;persistDraft();if(editing==a)sourceView.setText(a.sourceDescription());}
                 String report=files.isEmpty()?"没有成功缓存的歌曲，原音乐来源保持不变。":"已缓存 "+files.size()+" 首，保存闹钟后生效。断网时仍可播放。";
                 if(!failed.isEmpty())report+="\n\n以下曲目无法导入：\n"+String.join("\n",failed);
                 message("歌单导入结果",report);
