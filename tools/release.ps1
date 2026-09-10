@@ -1,4 +1,4 @@
-param([string]$Version = '1.0.0')
+param([string]$Version = '1.1.0')
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 Push-Location $root
@@ -11,7 +11,7 @@ try {
     Copy-Item -LiteralPath app/build/outputs/bundle/release/app-release.aab -Destination "dist/Qingling-$Version.aab"
     & git archive --format=zip "--output=dist/Qingling-$Version-source.zip" HEAD
     if ($LASTEXITCODE -ne 0) { throw 'Commit the source before packaging a release archive.' }
-    $checks = Get-ChildItem -LiteralPath dist -File | Where-Object { $_.Extension -in '.apk','.aab','.zip' } | ForEach-Object {
+    $checks = Get-ChildItem -LiteralPath dist -File | Where-Object { $_.Name -like "Qingling-$Version*" -and $_.Extension -in '.apk','.aab','.zip' } | ForEach-Object {
         $hash = Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256
         "$($hash.Hash.ToLower())  $($_.Name)"
     }

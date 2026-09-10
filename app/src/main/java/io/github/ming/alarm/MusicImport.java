@@ -13,6 +13,8 @@ import java.util.regex.*;
 public final class MusicImport {
     public static final class Song {
         public final long id; public final String title;
+        public volatile int availability; // 0 unknown, 1 checking, 2 available, 3 unavailable, 4 retryable.
+        public volatile String availabilityText="等待检测";
         Song(long id,String title) {this.id=id;this.title=title;}
     }
     public static final class Playlist {
@@ -54,10 +56,58 @@ public final class MusicImport {
         if(songs!=null) for(int i=0;i<Math.min(songs.length(),500);i++) {
             JSONObject s=songs.getJSONObject(i); JSONArray artists=s.optJSONArray("artists");if(artists==null)artists=s.optJSONArray("ar");
             String artist=artists!=null && artists.length()>0?artists.getJSONObject(0).optString("name"):"";
-            result.songs.add(new Song(s.getLong("id"),s.optString("name")+" · "+artist));
+            result.songs.add(song(s,artist));
         }
         if(result.songs.isEmpty()) throw new IOException("歌单为空或需要登录，暂无法导入");
         return result;
+    }
+    private static Song song(JSONObject s,String artist) throws Exception {
+        Song song=new Song(s.getLong("id"),s.optString("name")+" · "+artist);
+        JSONObject privilege=s.optJSONObject("privilege");
+        int fee=s.optInt("fee");
+        if(fee==1||fee==4){song.availability=3;song.availabilityText="不可导入 · VIP / 付费曲目";}
+        else if(privilege!=null && privilege.optInt("st")<0){song.availability=3;song.availabilityText="不可导入 · 暂无版权";}
+        return song;
+    }
+    public static Playlist shared(String text) throws Exception {
+        String expanded=text;
+        Matcher shortLink=Pattern.compile("https?://(?:163cn\\.tv|163cn\\.com|[a-zA-Z0-9-]+\\.music\\.163\\.com)/[^\\s]+|https?://music\\.163\\.com/[^\\s]+").matcher(text);
+        try{NetEaseLink.parse(expanded);}catch(IllegalArgumentException e){
+            if(shortLink.find()){
+                HttpURLConnection connection=connect(shortLink.group());
+                try{expanded=connection.getURL().toString();}finally{connection.disconnect();}
+            }
+        }
+        NetEaseLink link=NetEaseLink.parse(expanded);
+        if(link.kind.equals("playlist"))return load(link.id);
+        HttpURLConnection connection=connect("https://music.163.com/api/song/detail/?id="+link.id+"&ids="+URLEncoder.encode("["+link.id+"]","UTF-8"));
+        try(InputStream in=connection.getInputStream();ByteArrayOutputStream out=new ByteArrayOutputStream()){
+            copy(in,out,1024*1024);JSONObject root=new JSONObject(out.toString("UTF-8"));
+            JSONArray songs=root.optJSONArray("songs");if(songs==null||songs.length()==0)throw new IOException("无法读取这首歌曲");
+            JSONObject s=songs.getJSONObject(0);JSONArray artists=s.optJSONArray("artists");
+            Playlist list=new Playlist();list.title="从网易云选定的歌曲";
+            list.songs.add(song(s,artists!=null&&artists.length()>0?artists.getJSONObject(0).optString("name"):""));return list;
+        }finally{connection.disconnect();}
+    }
+    public static void probe(Song song){
+        if(song.availability==3)return;
+        song.availability=1;song.availabilityText="正在检测公开音频…";
+        HttpURLConnection connection=null;
+        try{
+            connection=connect("https://music.163.com/song/media/outer/url?id="+song.id+".mp3");
+            String type=connection.getContentType();
+            if(type!=null&&(type.contains("text/")||type.contains("json")))throw new FileNotFoundException("无可用公开音频");
+            try(InputStream in=connection.getInputStream()){
+                byte[] prefix=new byte[12];int count=0,n;
+                while(count<prefix.length&&(n=in.read(prefix,count,prefix.length-count))>0)count+=n;
+                boolean audio=count>=3&&((prefix[0]=='I'&&prefix[1]=='D'&&prefix[2]=='3')||((prefix[0]&255)==255&&(prefix[1]&224)==224)||
+                    (count>=4&&prefix[0]=='R'&&prefix[1]=='I'&&prefix[2]=='F'&&prefix[3]=='F'));
+                if(!audio)throw new FileNotFoundException("未返回可播放音频");
+            }
+            song.availability=2;song.availabilityText="可导入 · 公开音频已检查";
+        }catch(FileNotFoundException e){song.availability=3;song.availabilityText="不可导入 · 无可用公开音频";}
+        catch(Exception e){song.availability=4;song.availabilityText="检测失败 · 点击重试";}
+        finally{if(connection!=null)connection.disconnect();}
     }
     public static String local(Context c,Uri uri) throws Exception {
         File tmp=File.createTempFile("import-",".part",Store.music(c));

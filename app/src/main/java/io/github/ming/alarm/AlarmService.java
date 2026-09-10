@@ -13,6 +13,7 @@ public class AlarmService extends Service {
     public static volatile int activeId=Integer.MIN_VALUE;
     private final Handler handler=new Handler(Looper.getMainLooper());
     private MediaPlayer player;
+    private PcmPlayer pcm;
     private Vibrator vibrator;
     private PowerManager.WakeLock wake;
     private AudioManager audio;
@@ -20,11 +21,21 @@ public class AlarmService extends Service {
     private Alarm alarm;
     private int index, failures;
     private boolean mutedForDisconnect, registered;
+    private boolean prepared, focusGranted, hadHeadphones;
+    private final AudioDeviceCallback devices = new AudioDeviceCallback() {
+        @Override public void onAudioDevicesAdded(AudioDeviceInfo[] added) { refreshRoute(); }
+        @Override public void onAudioDevicesRemoved(AudioDeviceInfo[] removed) {
+            if (alarm != null && hadHeadphones && AudioOutput.preferred(AlarmService.this) == null) pauseForDisconnect();
+            else refreshRoute();
+        }
+    };
     private final BroadcastReceiver noisy=new BroadcastReceiver() {
         @Override public void onReceive(Context c,Intent i) {
-            mutedForDisconnect=true; releasePlayer(); vibrate();
-            Store.status(c,"耳机断开：已暂停音乐并改为振动，避免突然外放");
-            getSystemService(NotificationManager.class).notify(1,notification("耳机断开 · 已改为振动"));
+            // Some Bluetooth handovers emit NOISY while another media endpoint is already available.
+            handler.postDelayed(() -> {
+                if (AudioOutput.preferred(c) != null) refreshRoute();
+                else if (hadHeadphones) pauseForDisconnect();
+            }, 350);
         }
     };
     public static void dismiss(Context c,int id,boolean snooze) {
@@ -46,6 +57,7 @@ public class AlarmService extends Service {
         IntentFilter filter=new IntentFilter(AudioManager.ACTION_AUDIO_BECOMING_NOISY);
         if(Build.VERSION.SDK_INT>=33) registerReceiver(noisy,filter,Context.RECEIVER_NOT_EXPORTED); else registerReceiver(noisy,filter);
         registered=true;
+        audio.registerAudioDeviceCallback(devices, handler);
     }
     @Override public int onStartCommand(Intent intent,int flags,int startId) {
         if(intent==null) {stopSelf();return START_NOT_STICKY;}
@@ -56,6 +68,7 @@ public class AlarmService extends Service {
         alarm=id<0 ? Alarm.from(parse(intent.getStringExtra("preview"))) : Store.get(this,id);
         if(alarm==null) { stopSelf(); return START_NOT_STICKY; }
         activeId=id; index=0; failures=0; mutedForDisconnect=false;
+        hadHeadphones=AudioOutput.preferred(this)!=null; focusGranted=false;
         startForeground(1,notification(id<0?"试听 · 30 秒后结束":alarm.label));
         wake=getSystemService(PowerManager.class).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK,"qingling:ring");
         wake.acquire(11*60_000L);
@@ -63,15 +76,18 @@ public class AlarmService extends Service {
         if(alarm.mode!=1) {
             AudioAttributes attributes=new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build();
             focus=new AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-                .setAudioAttributes(attributes).setOnAudioFocusChangeListener(change->{
+                .setAcceptsDelayedFocusGain(true).setAudioAttributes(attributes).setOnAudioFocusChangeListener(change->{
                     if(change==AudioManager.AUDIOFOCUS_LOSS || change==AudioManager.AUDIOFOCUS_LOSS_TRANSIENT) {
-                        if(player!=null && player.isPlaying()) player.pause(); vibrate();
-                    } else if(change==AudioManager.AUDIOFOCUS_GAIN && player!=null && !mutedForDisconnect) {
-                        try { player.start(); if(alarm.mode==0) vibrator.cancel(); } catch(IllegalStateException ignored) { fallback(); }
+                        focusGranted=false;
+                        if(player!=null && prepared && player.isPlaying()) player.pause(); vibrate();
+                        if(pcm!=null)pcm.pause();
+                    } else if(change==AudioManager.AUDIOFOCUS_GAIN && !mutedForDisconnect) {
+                        focusGranted=true;
+                        if(player==null&&pcm==null) playNext(); else if(prepared) startAudio();
                     }
                 }).build();
             int result=audio.requestAudioFocus(focus);
-            if(result==AudioManager.AUDIOFOCUS_REQUEST_GRANTED) playNext();
+            if(result==AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {focusGranted=true;playNext();}
             else { vibrate(); Store.status(this,"音乐焦点被通话或其他应用占用，本次改为振动"); }
         }
         if(id>0) Store.status(this,"最近响铃："+alarm.time()+" · "+alarm.label);
@@ -111,9 +127,24 @@ public class AlarmService extends Service {
     }
     private void prepare(Uri uri,boolean builtIn) {
         releasePlayer();
+        if(!builtIn){
+            Store.prefs(this).edit().putString("audioDecode","正在解码导入音乐…").apply();
+            pcm=new PcmPlayer(this,new File(uri.getPath()),new PcmPlayer.Listener(){
+                public void ready(PcmPlayer sender){if(pcm==sender&&!mutedForDisconnect){prepared=true;if(focusGranted)startAudio();}}
+                public void complete(PcmPlayer sender){if(pcm==sender){failures=0;playNext();}}
+                public void error(PcmPlayer sender,String reason){if(pcm==sender){Store.status(AlarmService.this,"导入音频解码失败："+reason);failed(false);}}
+                public void route(AudioDeviceInfo actual){routeStatus(actual);}
+            });
+            pcm.setVolume(alarm.volume/100f);routePlayer();pcm.prepare();return;
+        }
+        Store.prefs(this).edit().putString("audioDecode","内置晨间微光").apply();
         try {
             player=new MediaPlayer();
             player.setAudioAttributes(new AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_MUSIC).build());
+            routePlayer();
+            if(Build.VERSION.SDK_INT>=28)player.addOnRoutingChangedListener(router -> {
+                if(player!=null) routeStatus(player.getRoutedDevice());
+            }, handler);
             if(builtIn) {
                 try(AssetFileDescriptor fd=getResources().openRawResourceFd(R.raw.morning)) {player.setDataSource(fd.getFileDescriptor(),fd.getStartOffset(),fd.getLength());}
             } else player.setDataSource(this,uri);
@@ -121,10 +152,8 @@ public class AlarmService extends Service {
             player.setVolume(alarm.volume/100f,alarm.volume/100f);
             player.setOnPreparedListener(mp->{
                 if(mp!=player || mutedForDisconnect) return;
-                mp.start();
-                if(audio.getStreamVolume(AudioManager.STREAM_MUSIC)==0) {
-                    vibrate(); Store.status(this,"媒体音量为 0：本次同时振动，请调高媒体音量");
-                }
+                prepared=true;
+                if(focusGranted) startAudio();
             });
             player.setOnCompletionListener(mp->{ failures=0; playNext(); });
             player.setOnErrorListener((mp,what,extra)->{ handler.post(()->failed(builtIn)); return true; });
@@ -136,7 +165,42 @@ public class AlarmService extends Service {
         if(builtIn) {vibrate(); Store.status(this,"音频播放失败，本次改为振动");}
         else {failures++;playNext();}
     }
-    private void releasePlayer() { if(player!=null) {player.release();player=null;} }
+    private void startAudio() {
+        if((player==null&&pcm==null) || !prepared || mutedForDisconnect || !focusGranted) return;
+        routePlayer();if(pcm!=null)pcm.play();else player.start();
+        if(alarm.mode==0 && vibrator!=null) vibrator.cancel();
+        if(audio.getStreamVolume(AudioManager.STREAM_MUSIC)==0) {
+            vibrate(); Store.status(this,"媒体音量为 0：本次同时振动，请调高媒体音量");
+        }
+        handler.postDelayed(() -> { if(pcm!=null)routeStatus(pcm.getRoutedDevice());else if(player!=null&&Build.VERSION.SDK_INT>=28) routeStatus(player.getRoutedDevice()); },500);
+    }
+    private void routePlayer() {
+        if(player==null&&pcm==null) return;
+        AudioDeviceInfo preferred=AudioOutput.preferred(this);
+        if(preferred!=null) hadHeadphones=true;
+        boolean accepted=pcm!=null?pcm.setPreferredDevice(preferred):Build.VERSION.SDK_INT>=28&&player.setPreferredDevice(preferred);
+        Store.prefs(this).edit().putString("audioRoute",preferred==null?"跟随系统媒体输出":
+            (accepted?"请求输出：":"系统未接受耳机路由：")+AudioOutput.name(preferred)).apply();
+    }
+    private void routeStatus(AudioDeviceInfo actual) {
+        String status="实际输出："+AudioOutput.name(actual);
+        Store.prefs(this).edit().putString("audioRoute",status).apply();
+        android.util.Log.i("QinglingAudio",status);
+    }
+    private void refreshRoute() {
+        if(alarm==null || alarm.mode==1) return;
+        if(AudioOutput.preferred(this)!=null && mutedForDisconnect) {
+            mutedForDisconnect=false; hadHeadphones=true;
+            if(focusGranted) playNext();
+        } else routePlayer();
+    }
+    private void pauseForDisconnect() {
+        if(alarm==null || alarm.mode==1 || mutedForDisconnect) return;
+        mutedForDisconnect=true; releasePlayer(); vibrate();
+        Store.status(this,"耳机断开：已暂停音乐并改为振动，重新连接后恢复音乐");
+        getSystemService(NotificationManager.class).notify(1,notification("耳机断开 · 已改为振动"));
+    }
+    private void releasePlayer() { prepared=false;if(player!=null) {player.release();player=null;}if(pcm!=null){pcm.close();pcm=null;} }
     private void cleanupPlayback() {
         handler.removeCallbacksAndMessages(null); releasePlayer();
         if(vibrator!=null) vibrator.cancel();
@@ -145,6 +209,7 @@ public class AlarmService extends Service {
     }
     @Override public void onDestroy() {
         cleanupPlayback(); if(registered) unregisterReceiver(noisy);
+        audio.unregisterAudioDeviceCallback(devices);
         activeId=Integer.MIN_VALUE; sendBroadcast(new Intent(CLOSED).setPackage(getPackageName()));
         stopForeground(STOP_FOREGROUND_REMOVE); super.onDestroy();
     }

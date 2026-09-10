@@ -20,37 +20,66 @@ import java.util.concurrent.*;
 
 public class MainActivity extends Activity {
     private Alarm editing;
+    private int tab=1;
+    private TextView outputView;
     private final ExecutorService worker=Executors.newSingleThreadExecutor();
     private TextView sourceView;
     private final Handler timer=new Handler(Looper.getMainLooper());
-    private final Runnable refresh=new Runnable(){public void run(){if(editing==null)home();timer.postDelayed(this,30_000);}};
+    private final Runnable refresh=new Runnable(){public void run(){
+        if(outputView!=null)outputView.setText(getString(R.string.audio_diagnostic,AudioOutput.available(MainActivity.this),Store.prefs(MainActivity.this).getString("audioRoute","试听时显示实际输出"),Store.prefs(MainActivity.this).getString("audioDecode","")));
+        timer.postDelayed(this,1500);
+    }};
     @Override public void onCreate(Bundle state){
         super.onCreate(state);setVolumeControlStream(AudioManager.STREAM_MUSIC);
         if(Build.VERSION.SDK_INT>=33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS},31);
+        if(state!=null)tab=state.getInt("tab",1);
         if(state!=null && state.containsKey("editing")) {
             try {editing=Alarm.from(new org.json.JSONObject(state.getString("editing")));}catch(Exception ignored){}
         }
         Scheduler.restore(this,false);
-        if(editing!=null) editor(); else {home(); handleIntent(getIntent());}
+        if(editing==null && Store.prefs(this).contains("draft"))try{editing=Alarm.from(new org.json.JSONObject(Store.prefs(this).getString("draft","{}")));}catch(Exception ignored){}
+        render();handleIntent(getIntent());
     }
     @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);handleIntent(intent);}
-    private void handleIntent(Intent i){int id=i.getIntExtra("edit",0);Alarm a=Store.get(this,id);if(a!=null){editing=a;editor();}i.removeExtra("edit");}
-    @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);if(editing!=null)out.putString("editing",editing.json().toString());}
-    @Override protected void onResume(){super.onResume();if(editing==null)home();timer.postDelayed(refresh,30_000);}
-    @Override protected void onPause(){timer.removeCallbacks(refresh);super.onPause();}
+    private void handleIntent(Intent i){
+        int id=i.getIntExtra("edit",0);Alarm a=Store.get(this,id);
+        if(a!=null){editing=a;tab=0;editor();}i.removeExtra("edit");
+        if(Intent.ACTION_SEND.equals(i.getAction())){
+            String shared=i.getStringExtra(Intent.EXTRA_TEXT);i.setAction(Intent.ACTION_MAIN);i.removeExtra(Intent.EXTRA_TEXT);
+            if(shared!=null){if(editing==null){editing=new Alarm();editing.id=Store.newId(this);}tab=0;editor();loadShared(shared);}
+        }
+    }
+    @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putInt("tab",tab);if(editing!=null)out.putString("editing",editing.json().toString());}
+    @Override protected void onResume(){super.onResume();if(tab==2)settings();else if(tab==1)home();timer.postDelayed(refresh,1500);}
+    @Override protected void onPause(){timer.removeCallbacks(refresh);persistDraft();super.onPause();}
+    public int currentTab(){return tab;}
+    public void selectTab(int next){
+        if(next==tab)return;
+        if(tab==0&&editing!=null){leaveEditor(()->{tab=next;render();});return;}
+        tab=next;render();
+    }
+    private void render(){
+        outputView=null;
+        if(tab==0){if(editing==null){editing=new Alarm();editing.id=Store.newId(this);}editor();}
+        else if(tab==2)settings();else home();
+    }
+    private void persistDraft(){
+        if(editing!=null)Store.prefs(this).edit().putString("draft",editing.json().toString()).apply();
+        else Store.prefs(this).edit().remove("draft").apply();
+    }
     @Override protected void onDestroy(){worker.shutdownNow();timer.removeCallbacksAndMessages(null);super.onDestroy();}
     private void ui(Runnable r){runOnUiThread(()->{if(!isFinishing()&&!isDestroyed())r.run();});}
     private void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
     private void message(String title,String text){new AlertDialog.Builder(this).setTitle(title).setMessage(text).setPositiveButton("知道了",null).show();}
     private void home(){
-        LinearLayout page=Ui.page(this);
-        page.addView(Ui.text(this,"Q I N G L I N G   /   青 铃",12,Ui.GREEN));
+        tab=1;outputView=null;LinearLayout page=Ui.page(this);
+        page.addView(Ui.text(this,"青 铃   /   我的闹钟",13,Ui.GREEN));
         LinearLayout heading=Ui.row(this);page.addView(heading);
         LinearLayout words=Ui.column(this);heading.addView(words,new LinearLayout.LayoutParams(0,-2,1));
-        words.addView(Ui.title(this,"把早安，\n交给喜欢的旋律。",27));
-        words.addView(Ui.text(this,"音乐相伴 · 轻轻唤醒",13,Ui.MUTED));
-        heading.addView(new MascotView(this),new LinearLayout.LayoutParams(Ui.dp(this,116),Ui.dp(this,136)));
+        words.addView(Ui.title(this,"早安，\n今天也陪着你。",27));
+        words.addView(Ui.text(this,"把喜欢的声音留给清晨",13,Ui.MUTED));
+        heading.addView(new MascotView(this),new LinearLayout.LayoutParams(Ui.dp(this,132),Ui.dp(this,205)));
         List<Alarm> alarms=Store.all(this);long next=Long.MAX_VALUE;Alarm soon=null;
         for(Alarm a:alarms){long at=a.enabled?a.nextAt:0;if(a.snoozeAt>0&&(at==0||a.snoozeAt<at))at=a.snoozeAt;if(at>0&&at<next){next=at;soon=a;}}
         LinearLayout hero=Ui.card(this,page,Ui.PALE);
@@ -62,9 +91,7 @@ public class MainActivity extends Activity {
             hero.addView(Ui.text(this,new SimpleDateFormat("M月d日 E",Locale.CHINA).format(new Date(next))+" · "+soon.label,14,Ui.INK));
             hero.addView(Ui.text(this,"约 "+(minutes/60)+" 小时 "+(minutes%60)+" 分钟后 · "+soon.modeName(),13,Ui.MUTED));
         }
-        if(!Scheduler.permitted(this)||!getSystemService(NotificationManager.class).areNotificationsEnabled()||!fullScreenAllowed())
-            page.addView(Ui.button(this,"完成权限设置，保证准时唤醒  →",false,this::guide));
-        page.addView(Ui.button(this,"＋  添加闹钟",true,()->{editing=new Alarm();editing.id=Store.newId(this);editor();}));
+        page.addView(Ui.button(this,"＋  设定新闹钟",true,()->{editing=new Alarm();editing.id=Store.newId(this);tab=0;editor();}));
         page.addView(Ui.title(this,"我的闹钟",20));
         if(alarms.isEmpty())page.addView(Ui.text(this,"还没有闹钟。添加后，也能在桌面小组件看到它。",14,Ui.MUTED));
         for(Alarm a:alarms){
@@ -75,16 +102,16 @@ public class MainActivity extends Activity {
             toggle.setOnCheckedChangeListener((b,on)->{a.enabled=on;Scheduler.save(this,a);home();if(on&&!Scheduler.permitted(this))guide();});
             card.addView(Ui.text(this,a.modeName()+"  /  "+a.source,13,Ui.GREEN));
             if(a.snoozeAt>0)card.addView(Ui.text(this,"稍后提醒："+new SimpleDateFormat("HH:mm",Locale.CHINA).format(new Date(a.snoozeAt)),13,Ui.GREEN));
-            info.setOnClickListener(v->{editing=Store.get(this,a.id);editor();});
-            card.setOnClickListener(v->{editing=Store.get(this,a.id);editor();});
+            info.setOnClickListener(v->{editing=Store.get(this,a.id);tab=0;editor();});
+            card.setOnClickListener(v->{editing=Store.get(this,a.id);tab=0;editor();});
         }
-        page.addView(Ui.button(this,"添加到桌面",false,this::pinWidget));
-        page.addView(Ui.button(this,"HyperOS 设置与使用说明",false,this::guide));
+        Button widget=Ui.button(this,AlarmWidget.hasWidget(this)?"✓ 闹钟表已添加到桌面":"将我的闹钟表添加到桌面",false,this::pinWidget);
+        widget.setEnabled(!AlarmWidget.hasWidget(this));page.addView(widget);
         String status=Store.prefs(this).getString("status","");if(!status.isEmpty())page.addView(Ui.text(this,status,12,Ui.MUTED));
-        page.addView(Ui.text(this,"青铃 1.0.0  ·  为你的每一个明天",12,Ui.MUTED));
+        page.addView(Ui.text(this,"青铃 1.1.0  ·  为你的每一个明天",12,Ui.MUTED));
     }
     private void editor(){
-        final Alarm a=editing;LinearLayout page=Ui.page(this);
+        tab=0;final Alarm a=editing;LinearLayout page=Ui.page(this);
         page.addView(Ui.button(this,"‹  返回",false,this::leaveEditor));
         page.addView(Ui.text(this,"MAKE ROOM FOR MORNING",12,Ui.GREEN));
         page.addView(Ui.title(this,Store.get(this,a.id)==null?"新的唤醒约定":"编辑唤醒约定",28));
@@ -109,30 +136,38 @@ public class MainActivity extends Activity {
             Intent intent=new Intent(Intent.ACTION_OPEN_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType("audio/*").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
             try{startActivityForResult(intent,42);}catch(ActivityNotFoundException e){message("无法打开文件选择器","请安装或启用系统文件管理器。");}
         }));
-        source.addView(Ui.button(this,"导入网易云歌单",false,this::playlistDialog));
+        source.addView(Ui.button(this,"去网易云 · 从歌单选歌",false,this::openNetEase));
+        source.addView(Ui.button(this,"接收分享链接 / 检查可导入歌曲",false,this::playlistDialog));
         source.addView(Ui.button(this,"使用内置 · 晨间微光",false,()->{a.tracks.clear();a.source="内置 · 晨间微光";a.playlist="";sourceView.setText(a.source);}));
-        source.addView(Ui.text(this,"本地支持 MP3 / M4A / FLAC / WAV 等系统可解码音频；不支持加密 NCM。歌单曲目缓存后按顺序循环，断网可用。纯振动模式不播放音乐。",12,Ui.MUTED));
+        source.addView(Ui.text(this,"在网易云的歌单里选中歌曲，点“分享 → 更多 → 青铃”；也可复制歌曲或歌单链接后返回粘贴。青铃会标出不可导入曲目。\n本地支持 MP3 / M4A / FLAC / WAV，不支持 NCM。导入后离线循环播放。",12,Ui.MUTED));
         page.addView(Ui.title(this,"播放强度",18));
         TextView volume=Ui.text(this,a.volume+"% × 系统媒体音量",14,Ui.MUTED);page.addView(volume);
         SeekBar seek=new SeekBar(this);seek.setMax(100);seek.setMin(10);seek.setProgress(a.volume);page.addView(seek);
         seek.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener(){public void onProgressChanged(SeekBar b,int v,boolean u){a.volume=v;volume.setText(getString(R.string.volume_label,v));}public void onStartTrackingTouch(SeekBar b){}public void onStopTrackingTouch(SeekBar b){}});
         page.addView(Ui.text(this,"使用媒体通道，跟随系统选定的有线／蓝牙耳机。请先连接耳机并试听，勿将媒体音量设为 0。耳机断开时改为振动。",13,Ui.MUTED));
+        outputView=Ui.text(this,AudioOutput.available(this),13,Ui.GREEN);page.addView(outputView);
         page.addView(Ui.button(this,"▷  试听 30 秒",false,()->{
             if(AlarmService.activeId>0){toast("当前闹钟正在响铃，请先停止");return;}
             startForegroundService(new Intent(this,AlarmService.class).putExtra("id",-1).putExtra("preview",a.json().toString()));
             toast("正在试听，可用音量键调整媒体音量");
         }));
         page.addView(Ui.button(this,"停止试听",false,()->AlarmService.dismiss(this,-1,false)));
-        page.addView(Ui.button(this,"保存闹钟",true,()->{
-            if(a.label.trim().isEmpty())a.label="早安，新的一天";
-            AlarmService.dismiss(this,-1,false);a.enabled=true;Scheduler.save(this,a);editing=null;home();
-            if(!Scheduler.permitted(this))guide();else toast("已设置 "+a.time()+" · "+a.repeatName());
-        }));
+        page.addView(Ui.button(this,"保存闹钟",true,()->{saveEditor();tab=1;home();}));
         if(Store.get(this,a.id)!=null)page.addView(Ui.button(this,"删除闹钟",false,()->new AlertDialog.Builder(this).setTitle("删除这个闹钟？").setMessage(a.time()+" · "+a.label)
-            .setPositiveButton("删除",(d,w)->{Scheduler.cancel(this,a);AlarmService.dismiss(this,a.id,false);Store.delete(this,a.id);AlarmWidget.update(this);editing=null;home();}).setNegativeButton("取消",null).show()));
+            .setPositiveButton("删除",(d,w)->{Scheduler.cancel(this,a);AlarmService.dismiss(this,a.id,false);Store.delete(this,a.id);AlarmWidget.update(this);editing=null;persistDraft();tab=1;home();}).setNegativeButton("取消",null).show()));
     }
-    private void leaveEditor(){new AlertDialog.Builder(this).setTitle("放弃尚未保存的修改？").setPositiveButton("放弃",(d,w)->{AlarmService.dismiss(this,-1,false);editing=null;home();}).setNegativeButton("继续编辑",null).show();}
-    @Override public void onBackPressed(){if(editing!=null)leaveEditor();else super.onBackPressed();}
+    private void saveEditor(){
+        Alarm a=editing;if(a==null)return;
+        if(a.label.trim().isEmpty())a.label="早安，新的一天";
+        AlarmService.dismiss(this,-1,false);a.enabled=true;Scheduler.save(this,a);editing=null;persistDraft();
+        toast(Scheduler.permitted(this)?"已保存 "+a.time():"已保存，请到系统设置开启精确闹钟权限");
+    }
+    private void leaveEditor(){leaveEditor(()->{tab=1;home();});}
+    private void leaveEditor(Runnable next){new AlertDialog.Builder(this).setTitle("保存这个闹钟吗？")
+        .setPositiveButton("保存并返回",(d,w)->{saveEditor();next.run();})
+        .setNegativeButton("不保存",(d,w)->{AlarmService.dismiss(this,-1,false);editing=null;persistDraft();next.run();})
+        .setNeutralButton("继续编辑",null).show();}
+    @Override public void onBackPressed(){if(tab==0&&editing!=null)leaveEditor();else if(tab!=1){tab=1;home();}else super.onBackPressed();}
     @Override protected void onActivityResult(int request,int result,Intent data){
         super.onActivityResult(request,result,data);if(request!=42||result!=RESULT_OK||data==null||data.getData()==null||editing==null)return;
         Uri uri=data.getData();String name="本地音乐";
@@ -141,25 +176,29 @@ public class MainActivity extends Activity {
         worker.execute(()->{try{String path=MusicImport.local(this,uri);ui(()->{progress.dismiss();a.tracks.clear();a.tracks.add(path);a.source="本地 · "+title;a.playlist="";if(editing==a)sourceView.setText(a.source);toast("导入成功，保存闹钟后生效");});}catch(Exception e){ui(()->{progress.dismiss();message("导入失败",e.getMessage());});}});
     }
     private ProgressDialog progress(String title){ProgressDialog p=new ProgressDialog(this);p.setMessage(title);p.setCancelable(false);p.show();return p;}
+    private void openNetEase(){
+        persistDraft();
+        Intent launch=getPackageManager().getLaunchIntentForPackage("com.netease.cloudmusic");
+        if(launch==null){message("未找到网易云音乐","请先安装网易云音乐，或通过分享链接选择歌曲。");return;}
+        if(editing!=null&&!editing.playlist.isEmpty())try{
+            NetEaseLink link=NetEaseLink.parse(editing.playlist);
+            launch=new Intent(Intent.ACTION_VIEW,Uri.parse("orpheus://"+link.kind+"/"+link.id)).setPackage("com.netease.cloudmusic");
+        }catch(Exception ignored){}
+        try{startActivity(launch);toast("从歌单选歌后，分享 → 更多 → 青铃");}
+        catch(Exception e){Intent fallback=getPackageManager().getLaunchIntentForPackage("com.netease.cloudmusic");if(fallback!=null)startActivity(fallback);}
+    }
     private void playlistDialog(){
-        EditText input=new EditText(this);input.setHint("网易云歌单分享链接 / 歌单 ID");input.setText(editing.playlist);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT);input.setMaxLines(4);
-        new AlertDialog.Builder(this).setTitle("网易云公开歌单").setMessage("读取公开歌单，选择最多 20 首可直接播放的曲目并缓存。不支持登录、VIP、付费或受限歌曲；接口变化时可改用本地导入。歌单不会自动同步。")
-            .setView(input).setPositiveButton("读取歌单",(d,w)->loadPlaylist(input.getText().toString())).setNegativeButton("取消",null).show();
+        EditText input=new EditText(this);input.setHint("网易云歌曲 / 歌单分享链接");input.setText(editing.playlist);input.setInputType(android.text.InputType.TYPE_CLASS_TEXT);input.setMaxLines(4);
+        new AlertDialog.Builder(this).setTitle("从网易云选歌").setMessage("粘贴分享链接。下一页会检查可导入状态，VIP、付费或无公开音频的歌曲标红且不可勾选。")
+            .setView(input).setPositiveButton("检查并选歌",(d,w)->loadShared(input.getText().toString())).setNegativeButton("取消",null).show();
     }
-    private void loadPlaylist(String text){
-        final String id;try{id=MusicImport.playlistId(text);}catch(Exception e){message("链接无法识别",e.getMessage());return;}
-        Alarm a=editing;ProgressDialog p=progress("正在读取公开歌单…");
-        worker.execute(()->{try{MusicImport.Playlist list=MusicImport.load(id);ui(()->{p.dismiss();chooseSongs(a,id,list);});}catch(Exception e){ui(()->{p.dismiss();message("读取失败",e.getMessage());});}});
-    }
-    private void chooseSongs(Alarm a,String id,MusicImport.Playlist list){
-        String[] titles=new String[list.songs.size()];boolean[] checked=new boolean[titles.length];
-        for(int i=0;i<titles.length;i++)titles[i]=list.songs.get(i).title;
-        AlertDialog dialog=new AlertDialog.Builder(this).setTitle(list.title+" · 选择 1–20 首")
-            .setMultiChoiceItems(titles,checked,(d,which,on)->checked[which]=on).setPositiveButton("缓存所选歌曲",null).setNegativeButton("取消",null).create();
-        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{
-            List<MusicImport.Song> selected=new ArrayList<>();for(int i=0;i<checked.length;i++)if(checked[i])selected.add(list.songs.get(i));
-            if(selected.isEmpty()||selected.size()>20){toast("请选择 1–20 首歌曲");return;}dialog.dismiss();download(a,id,list.title,selected);
-        }));dialog.show();
+    private void loadShared(String text){
+        if(editing==null)return;
+        Alarm a=editing;ProgressDialog p=progress("正在读取网易云分享…");
+        worker.execute(()->{try{
+            MusicImport.Playlist list=MusicImport.shared(text);
+            ui(()->{p.dismiss();SongPicker.show(this,list,selected->download(a,text,list.title,selected));});
+        }catch(Exception e){ui(()->{p.dismiss();message("无法读取分享",e.getMessage());});}});
     }
     private void download(Alarm a,String id,String title,List<MusicImport.Song> songs){
         ProgressDialog p=progress("准备缓存歌曲…");
@@ -176,25 +215,18 @@ public class MainActivity extends Activity {
     }
     private boolean fullScreenAllowed(){return Build.VERSION.SDK_INT<34||getSystemService(NotificationManager.class).canUseFullScreenIntent();}
     private void open(Intent i){try{startActivity(i);}catch(Exception e){toast("此系统未提供该入口，请在系统设置 → 应用 → 青铃中手动设置");}}
-    private void guide(){
-        LinearLayout content=Ui.column(this);content.setPadding(Ui.dp(this,22),Ui.dp(this,8),Ui.dp(this,22),Ui.dp(this,18));ScrollView scroll=new ScrollView(this);scroll.addView(content);
-        content.addView(Ui.text(this,"适配目标：Xiaomi HyperOS 3.0.10.0.VMICNXM（Android 15）。不同 HyperOS 版本的设置名称可能不同。",14,Ui.INK));
-        content.addView(Ui.button(this,(Scheduler.permitted(this)?"✓ ":"○ ")+"允许精确闹钟",false,()->{if(Build.VERSION.SDK_INT>=31)open(new Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM,Uri.parse("package:"+getPackageName())));}));
-        content.addView(Ui.button(this,(getSystemService(NotificationManager.class).areNotificationsEnabled()?"✓ ":"○ ")+"允许通知与锁屏通知",false,()->open(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()))));
-        content.addView(Ui.button(this,(fullScreenAllowed()?"✓ ":"○ ")+"允许全屏提醒",false,()->{if(Build.VERSION.SDK_INT>=34)open(new Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,Uri.parse("package:"+getPackageName())));}));
-        content.addView(Ui.button(this,"打开应用详情 · 设置后台权限",false,()->open(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,Uri.parse("package:"+getPackageName())))));
-        content.addView(Ui.button(this,"打开 HyperOS 自启动管理",false,()->open(new Intent().setComponent(new ComponentName("com.miui.securitycenter","com.miui.permcenter.autostart.AutoStartManagementActivity")))));
-        content.addView(Ui.text(this,"① 开启青铃的后台自启动。\n② 应用省电策略选“无限制”，在最近任务中锁定青铃。\n③ 在其他权限中允许锁屏显示、后台弹出界面（如果系统提供）。\n④ 允许通知，开启锁屏通知、悬浮通知和全屏提醒。\n⑤ 连上耳机，调高媒体音量，并设置一个 2 分钟后的闹钟，锁屏验证。\n\n媒体播放跟随系统当前音频路由；通话、勿扰和蓝牙断连可能影响提醒。耳机断开或音频不可用时会改为振动。\n\n手机关机、强行停止应用、撤销精确闹钟权限时不能正常响铃；强行停止后需重新打开青铃。重启会恢复计划，10 分钟内错过的闹钟将补响；更早的按下一次时间计算。\n\n响铃最多 10 分钟，稍后提醒为 5 分钟。重新编辑或关闭闹钟会取消其稍后提醒。",14,Ui.MUTED));
-        content.addView(Ui.button(this,"清理未使用的音乐缓存",false,()->{
-            Set<String> used=new HashSet<>();for(Alarm a:Store.all(this))used.addAll(a.tracks);if(editing!=null)used.addAll(editing.tracks);
-            long bytes=0;File[] files=Store.music(this).listFiles();if(files!=null)for(File f:files)if(!used.contains(f.getName())&&!f.getName().endsWith(".part")){long n=f.length();if(f.delete())bytes+=n;}
-            toast("已清理 "+(bytes/1024/1024)+" MB 未使用缓存");
-        }));
-        new AlertDialog.Builder(this).setTitle("让青铃准时抵达").setView(scroll).setPositiveButton("完成",(d,w)->{Scheduler.restore(this,false);if(editing==null)home();}).show();
-    }
+    private void guide(){selectTab(2);}
+    public void showSettings(){tab=2;settings();}
+    private void settings(){tab=2;outputView=null;SettingsPanel.populate(this,Ui.page(this));}
     private void pinWidget(){
+        if(AlarmWidget.hasWidget(this)){toast("我的闹钟表已添加到桌面");home();return;}
+        long pending=Store.prefs(this).getLong("widgetPinPending",0);
+        if(System.currentTimeMillis()-pending<30_000){toast("请完成桌面的添加确认");return;}
         AppWidgetManager m=getSystemService(AppWidgetManager.class);
-        if(m.isRequestPinAppWidgetSupported())m.requestPinAppWidget(new ComponentName(this,AlarmWidget.class),null,null);
+        if(m.isRequestPinAppWidgetSupported()){
+            PendingIntent callback=PendingIntent.getBroadcast(this,100,new Intent(this,AlarmWidget.class).setAction("io.github.ming.alarm.WIDGET_PINNED"),PendingIntent.FLAG_UPDATE_CURRENT|PendingIntent.FLAG_IMMUTABLE);
+            if(m.requestPinAppWidget(new ComponentName(this,AlarmWidget.class),null,callback))Store.prefs(this).edit().putLong("widgetPinPending",System.currentTimeMillis()).apply();
+        }
         else message("添加桌面小组件","长按桌面空白处 → 添加小部件 → Android 小部件 → 青铃。小组件会显示下一次闹钟，点击即可进入。");
     }
 }

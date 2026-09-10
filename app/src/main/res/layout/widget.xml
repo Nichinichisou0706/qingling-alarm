@@ -1,5 +1,12 @@
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@drawable/widget_bg">
-    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_title" android:textSize="12sp" android:textColor="#26796D" />
-    <TextView android:id="@+id/widget_time" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_example_time" android:textSize="36sp" android:fontFamily="sans-serif-light" android:textColor="#193A34" />
-    <TextView android:id="@+id/widget_detail" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_empty" android:textSize="12sp" android:maxLines="3" android:ellipsize="end" android:textColor="#45665C" />
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+        <LinearLayout android:layout_width="0dp" android:layout_weight="1" android:layout_height="wrap_content" android:orientation="vertical">
+            <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_title" android:textSize="12sp" android:textColor="#26796D" />
+            <TextView android:id="@+id/widget_time" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_example_time" android:textSize="32sp" android:fontFamily="sans-serif-light" android:textColor="#193A34" />
+        </LinearLayout>
+        <ImageView android:id="@+id/widget_character" android:layout_width="54dp" android:layout_height="54dp" android:src="@drawable/character_icon" android:contentDescription="@string/character_description" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_detail" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_empty" android:textSize="11sp" android:maxLines="2" android:ellipsize="end" android:textColor="#45665C" />
+    <ListView android:id="@+id/widget_list" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:layout_marginTop="6dp" android:divider="#C8DDD2" android:dividerHeight="1dp" />
+    <TextView android:id="@+id/widget_empty" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_empty" android:textColor="#45665C" android:textSize="12sp" />
 </LinearLayout>

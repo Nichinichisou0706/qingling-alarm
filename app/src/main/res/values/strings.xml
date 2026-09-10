@@ -1,6 +1,9 @@
 <resources>
     <string name="widget_description">显示下一次唤醒和已开启的闹钟，点击快速进入青铃。</string>
-    <string name="widget_title">青铃  /  NEXT MORNING</string>
+    <string name="widget_title">我的闹钟表 · 下一次唤醒</string>
+    <string name="character_description">青铃少女</string>
+    <string name="manual_permission">我已按说明开启“%1$s”</string>
+    <string name="audio_diagnostic">%1$s\n%2$s\n%3$s</string>
     <string name="widget_example_time">07:30</string>
     <string name="widget_empty">点击设置你的第一声早安</string>
     <string name="repeat_label">重复 · %1$s</string>
