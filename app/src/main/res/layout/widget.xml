@@ -1,0 +1,5 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" android:background="@drawable/widget_bg">
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_title" android:textSize="12sp" android:textColor="#26796D" />
+    <TextView android:id="@+id/widget_time" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_example_time" android:textSize="36sp" android:fontFamily="sans-serif-light" android:textColor="#193A34" />
+    <TextView android:id="@+id/widget_detail" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/widget_empty" android:textSize="12sp" android:maxLines="3" android:ellipsize="end" android:textColor="#45665C" />
+</LinearLayout>
